@@ -68,12 +68,29 @@ ax.step(extended_idx, extended_vals, where="post", color="#27ae60",
 ax.axhline(y=baseline_val * 100, color="#3498db", linestyle="--",
            alpha=0.4, linewidth=1, label=f"Baseline ({baseline_val*100:.1f}%)")
 
-# Annotate ONLY kept experiments (clean, no overlap)
-offsets = [(12, 14), (12, -20), (12, 14)]  # manual offsets for 3 kept points
+# Shorten descriptions for annotations
+def shorten(desc):
+    d = str(desc).strip()
+    replacements = {
+        "precompute features + disable noise": "precompute features",
+        "smaller batches (5K) + higher LR (2e-3)": "small batch + high LR",
+        "increase encoder layers 3->5": "5 encoder layers",
+        "wider model (192-dim) + fewer layers (2)": "192-dim / 2 layers",
+        "remove dropout (underfitting regime)": "remove dropout",
+        "LR 2e-3 + no warmup": "LR 2e-3, no warmup",
+        "add input skip connection": "input skip conn.",
+        "replace ReLU with GELU": "GELU activation",
+        "remove edge updates for speed": "no edge updates",
+        "mean aggregation instead of sum": "mean aggregation",
+    }
+    return replacements.get(d, d[:25])
+
+# Annotate kept experiments (bold, green box)
+kept_offsets = [(15, 18), (15, -25), (15, 18)]
 for i, idx in enumerate(kept.index):
-    desc = str(valid.loc[idx, "description"]).strip()
+    desc = shorten(valid.loc[idx, "description"])
     val = valid.loc[idx, "val_metric"] * 100
-    ox, oy = offsets[i] if i < len(offsets) else (12, 14)
+    ox, oy = kept_offsets[i] if i < len(kept_offsets) else (15, 18)
     ax.annotate(f"{desc}\n({val:.1f}%)", (idx, val),
                 textcoords="offset points", xytext=(ox, oy),
                 fontsize=9, color="#1a7a3a", fontweight="bold",
@@ -83,6 +100,23 @@ for i, idx in enumerate(kept.index):
                 arrowprops=dict(arrowstyle="->", color="#2ecc71",
                                 connectionstyle="arc3,rad=0.2"))
 
+# Annotate discarded experiments (smaller, gray, alternating above/below)
+disc_list = list(disc.index)
+for j, idx in enumerate(disc_list):
+    desc = shorten(valid.loc[idx, "description"])
+    val = valid.loc[idx, "val_metric"] * 100
+    # Alternate above and below to reduce overlap
+    if j % 2 == 0:
+        oy = -18
+        va = "top"
+    else:
+        oy = 14
+        va = "bottom"
+    ax.annotate(desc, (idx, val),
+                textcoords="offset points", xytext=(0, oy),
+                fontsize=7.5, color="#7f8c8d", fontstyle="italic",
+                ha="center", va=va, alpha=0.85)
+
 ax.set_xlabel("Experiment #")
 ax.set_ylabel("Sequence Recovery (%)")
 ax.set_title(f"Protein Inverse Folding — Autoresearch (300s budget)\n"
@@ -91,9 +125,9 @@ ax.set_title(f"Protein Inverse Folding — Autoresearch (300s budget)\n"
              fontweight="bold")
 ax.legend(loc="lower right", fontsize=10, framealpha=0.9)
 ax.grid(True, alpha=0.15)
-ax.set_xlim(-0.5, n_total - 0.5)
-y_min = valid["val_metric"].min() * 100 - 2
-y_max = valid["val_metric"].max() * 100 + 4
+ax.set_xlim(-0.8, n_total - 0.2)
+y_min = valid["val_metric"].min() * 100 - 4
+y_max = valid["val_metric"].max() * 100 + 5
 ax.set_ylim(y_min, y_max)
 
 plt.tight_layout()
