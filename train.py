@@ -21,6 +21,7 @@ import torch.nn.functional as F
 from prepare import (
     TIME_BUDGET, SEED, NUM_AMINO_ACIDS, MAX_NEIGHBORS, NUM_RBF,
     compute_edge_features, compute_node_features,
+    make_dataloader, evaluate_recovery,
 )
 
 # Hyperparameters (edit freely)
@@ -160,3 +161,117 @@ class InverseFoldingModel(nn.Module):
         nodes = self.encode(node_features, edge_features, batch['knn_indices'])
         logits = self.output_head(nodes)  # (N, 20)
         return logits
+
+
+# ---------------------------------------------------------------------------
+# Device setup
+# ---------------------------------------------------------------------------
+
+if torch.backends.mps.is_available():
+    device = torch.device("mps")
+elif torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
+
+torch.manual_seed(SEED)
+if device.type == "cuda":
+    torch.cuda.manual_seed(SEED)
+
+# ---------------------------------------------------------------------------
+# Setup: model, optimizer, dataloaders
+# ---------------------------------------------------------------------------
+
+t_start = time.time()
+
+train_loader = make_dataloader('train', BATCH_SIZE_TOKENS)
+val_loader = make_dataloader('val', BATCH_SIZE_TOKENS)
+test_loader = make_dataloader('test', BATCH_SIZE_TOKENS)
+
+model = InverseFoldingModel().to(device)
+num_params = sum(p.numel() for p in model.parameters())
+print(f"Model parameters: {num_params:,}")
+print(f"Device: {device}")
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.01)
+
+# ---------------------------------------------------------------------------
+# Training loop
+# ---------------------------------------------------------------------------
+
+total_training_time = 0
+step = 0
+epoch = 0
+
+while True:
+    model.train()
+    epoch_loss = 0
+    epoch_residues = 0
+
+    for batch in train_loader:
+        t0 = time.time()
+
+        batch = {k: v.to(device) if torch.is_tensor(v) else v
+                 for k, v in batch.items()}
+
+        loss = model(batch)
+        optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+
+        step += 1
+
+        if device.type == "mps":
+            torch.mps.synchronize()
+        elif device.type == "cuda":
+            torch.cuda.synchronize()
+
+        dt = time.time() - t0
+        total_training_time += dt
+
+        epoch_loss += loss.item() * batch['mask'].sum().item()
+        epoch_residues += batch['mask'].sum().item()
+
+        if total_training_time >= TIME_BUDGET:
+            break
+
+    epoch += 1
+
+    # LR warmup
+    if epoch <= WARMUP_EPOCHS:
+        lr_scale = epoch / WARMUP_EPOCHS
+        for pg in optimizer.param_groups:
+            pg['lr'] = LR * lr_scale
+
+    avg_loss = epoch_loss / max(epoch_residues, 1)
+    print(f"Epoch {epoch} | Loss: {avg_loss:.4f} | Time: {total_training_time:.0f}s")
+
+    if total_training_time >= TIME_BUDGET:
+        break
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+
+model.eval()
+with torch.no_grad():
+    recovery, perplexity = evaluate_recovery(model, test_loader, device)
+
+t_end = time.time()
+
+# Memory reporting
+if device.type == "mps":
+    peak_vram_mb = torch.mps.driver_allocated_memory() / 1024 / 1024
+elif device.type == "cuda":
+    peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+else:
+    peak_vram_mb = 0.0
+
+print("---")
+print(f"val_metric:       {recovery:.6f}")
+print(f"val_perplexity:   {perplexity:.4f}")
+print(f"training_seconds: {total_training_time:.1f}")
+print(f"total_seconds:    {t_end - t_start:.1f}")
+print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
+print(f"num_params:       {num_params}")
