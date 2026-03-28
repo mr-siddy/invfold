@@ -249,3 +249,140 @@ def cache_dataset() -> None:
                 print(f"[cache] Progress: {count} proteins processed (line {line_idx + 1})")
 
     print(f"[cache] Done. Total cached: {count}, skipped: {skipped}")
+
+
+# ---------------------------------------------------------------------------
+# Featurization utilities
+# ---------------------------------------------------------------------------
+
+def gaussian_rbf(distances, D_min=RBF_D_MIN, D_max=RBF_D_MAX, num_rbf=NUM_RBF):
+    """Expand scalar distances into Gaussian RBF features.
+
+    Args:
+        distances: (...,) tensor of scalar distances.
+        D_min: minimum distance for RBF centers.
+        D_max: maximum distance for RBF centers.
+        num_rbf: number of RBF basis functions.
+
+    Returns:
+        (..., num_rbf) tensor of RBF-encoded distances.
+    """
+    D_mu = torch.linspace(D_min, D_max, num_rbf, device=distances.device)
+    D_sigma = (D_max - D_min) / num_rbf
+    return torch.exp(-((distances.unsqueeze(-1) - D_mu) ** 2) / (2 * D_sigma ** 2))
+
+
+def compute_edge_features(coords_5atom, knn_indices):
+    """Compute RBF-encoded pairwise inter-atom distance features for edges.
+
+    Args:
+        coords_5atom: (N, 5, 3) tensor — N, CA, C, O, Cb coordinates.
+        knn_indices: (N, k) long tensor of neighbor indices.
+
+    Returns:
+        (N, k, 240) tensor of edge features (15 atom pairs * 16 RBF).
+    """
+    N_residues = coords_5atom.shape[0]
+    k = knn_indices.shape[1]
+
+    src = coords_5atom.unsqueeze(1)           # (N, 1, 5, 3)
+    dst = coords_5atom[knn_indices]           # (N, k, 5, 3)
+
+    # All 5x5 pairwise distances between src and dst atoms
+    diff = src.unsqueeze(3) - dst.unsqueeze(2)  # (N, k, 5, 5, 3)
+    all_dists = diff.norm(dim=-1)               # (N, k, 5, 5)
+
+    # Extract upper triangle including diagonal (15 unique pairs)
+    idx = torch.triu_indices(5, 5)
+    dists_15 = all_dists[:, :, idx[0], idx[1]]  # (N, k, 15)
+
+    # RBF encode
+    rbf = gaussian_rbf(dists_15)                 # (N, k, 15, 16)
+    edge_features = rbf.reshape(N_residues, k, 15 * NUM_RBF)  # (N, k, 240)
+    return edge_features
+
+
+def _dihedral(p0, p1, p2, p3):
+    """Compute dihedral angle from four points.
+
+    Args:
+        p0, p1, p2, p3: tensors of shape (..., 3).
+
+    Returns:
+        (...,) tensor of dihedral angles in radians.
+    """
+    b1 = p1 - p0
+    b2 = p2 - p1
+    b3 = p3 - p2
+    n1 = torch.cross(b1, b2, dim=-1)
+    n2 = torch.cross(b2, b3, dim=-1)
+    n1 = n1 / (n1.norm(dim=-1, keepdim=True) + 1e-7)
+    n2 = n2 / (n2.norm(dim=-1, keepdim=True) + 1e-7)
+    m1 = torch.cross(n1, b2 / (b2.norm(dim=-1, keepdim=True) + 1e-7), dim=-1)
+    x = (n1 * n2).sum(dim=-1)
+    y = (m1 * n2).sum(dim=-1)
+    return torch.atan2(y, x)
+
+
+def compute_node_features(coords_4atom, batch_idx, lengths):
+    """Compute backbone dihedral angle features per residue.
+
+    Computes phi, psi, omega dihedrals and encodes them as sin/cos pairs.
+    Dihedrals are NOT computed across protein boundaries in concatenated
+    batches.
+
+    Args:
+        coords_4atom: (N, 4, 3) tensor — N, CA, C, O backbone atoms.
+        batch_idx: (N,) long tensor — protein index per residue.
+        lengths: list of per-protein lengths.
+
+    Returns:
+        (N, 6) tensor of [sin(phi), cos(phi), sin(psi), cos(psi),
+                          sin(omega), cos(omega)].
+    """
+    N_total = coords_4atom.shape[0]
+
+    # Extract backbone atom positions
+    atom_N = coords_4atom[:, 0]   # (N, 3)
+    atom_CA = coords_4atom[:, 1]  # (N, 3)
+    atom_C = coords_4atom[:, 2]   # (N, 3)
+
+    # Initialize dihedral angles to zero
+    phi = torch.zeros(N_total, device=coords_4atom.device)
+    psi = torch.zeros(N_total, device=coords_4atom.device)
+    omega = torch.zeros(N_total, device=coords_4atom.device)
+
+    # Mask for valid consecutive pairs (same protein)
+    same_as_next = batch_idx[:-1] == batch_idx[1:]  # (N-1,)
+
+    # phi(i) = dihedral(C_{i-1}, N_i, CA_i, C_i) — needs i-1 and i in same protein
+    valid_phi = same_as_next  # index i means residues i and i+1 are same protein
+    # For phi at position i, we need i-1 in same protein → valid_phi at i-1
+    # So phi is valid for indices 1..N-1 where same_as_next[i-1] is True
+    phi_idx = torch.where(same_as_next)[0] + 1  # residues where i-1 is in same protein
+    if phi_idx.numel() > 0:
+        phi[phi_idx] = _dihedral(
+            atom_C[phi_idx - 1], atom_N[phi_idx], atom_CA[phi_idx], atom_C[phi_idx]
+        )
+
+    # psi(i) = dihedral(N_i, CA_i, C_i, N_{i+1}) — needs i and i+1 in same protein
+    psi_idx = torch.where(same_as_next)[0]  # residues where i+1 is in same protein
+    if psi_idx.numel() > 0:
+        psi[psi_idx] = _dihedral(
+            atom_N[psi_idx], atom_CA[psi_idx], atom_C[psi_idx], atom_N[psi_idx + 1]
+        )
+
+    # omega(i) = dihedral(CA_i, C_i, N_{i+1}, CA_{i+1}) — needs i and i+1 in same protein
+    if psi_idx.numel() > 0:
+        omega[psi_idx] = _dihedral(
+            atom_CA[psi_idx], atom_C[psi_idx], atom_N[psi_idx + 1], atom_CA[psi_idx + 1]
+        )
+
+    # Encode as sin/cos pairs
+    node_features = torch.stack([
+        torch.sin(phi), torch.cos(phi),
+        torch.sin(psi), torch.cos(psi),
+        torch.sin(omega), torch.cos(omega),
+    ], dim=-1)  # (N, 6)
+
+    return node_features
