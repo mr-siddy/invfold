@@ -386,3 +386,133 @@ def compute_node_features(coords_4atom, batch_idx, lengths):
     ], dim=-1)  # (N, 6)
 
     return node_features
+
+
+# ---------------------------------------------------------------------------
+# Dataset, collation, and dataloader
+# ---------------------------------------------------------------------------
+
+class ProteinDataset(torch.utils.data.Dataset):
+    """Dataset that loads preprocessed .pt files for individual proteins."""
+
+    def __init__(self, names, processed_dir=PROCESSED_DIR):
+        self.names = names
+        self.processed_dir = processed_dir
+
+    def __len__(self):
+        return len(self.names)
+
+    def __getitem__(self, idx):
+        name = self.names[idx]
+        path = os.path.join(self.processed_dir, f"{name}.pt")
+        return torch.load(path, weights_only=False)
+
+
+def collate_proteins(batch_list):
+    """PyG-style concatenation collation for a list of protein dicts.
+
+    Concatenates residue-level tensors along dim 0 and offsets knn_indices
+    so that neighbor references remain valid in the concatenated batch.
+
+    Args:
+        batch_list: list of dicts, each with keys 'coords', 'seq', 'mask',
+                    'knn_indices', 'length'.
+
+    Returns:
+        dict with keys 'coords', 'seq', 'mask', 'knn_indices', 'batch_idx',
+        'lengths'.
+    """
+    coords_list = []
+    seq_list = []
+    mask_list = []
+    knn_list = []
+    batch_idx_list = []
+    lengths = []
+
+    offset = 0
+    for i, item in enumerate(batch_list):
+        L = item['length']
+        lengths.append(L)
+        coords_list.append(item['coords'])
+        seq_list.append(item['seq'])
+        mask_list.append(item['mask'])
+        knn_list.append(item['knn_indices'] + offset)
+        batch_idx_list.append(torch.full((L,), i, dtype=torch.long))
+        offset += L
+
+    return {
+        'coords': torch.cat(coords_list, dim=0),
+        'seq': torch.cat(seq_list, dim=0),
+        'mask': torch.cat(mask_list, dim=0),
+        'knn_indices': torch.cat(knn_list, dim=0),
+        'batch_idx': torch.cat(batch_idx_list, dim=0),
+        'lengths': lengths,
+    }
+
+
+def make_dataloader(split, batch_size_tokens=10000):
+    """Create a token-batched dataloader that yields collated protein batches.
+
+    Proteins are sorted by length and greedily packed so that each batch
+    contains approximately *batch_size_tokens* residues.  Training batches
+    are shuffled and yielded infinitely; val/test batches are yielded once
+    in deterministic order.
+
+    Args:
+        split: one of 'train', 'val', 'validation', 'test'.
+        batch_size_tokens: approximate number of residues per batch.
+
+    Returns:
+        A generator yielding collated batch dicts.
+    """
+    splits = load_splits()
+    split_key = 'validation' if split == 'val' else split
+    names = splits[split_key]
+
+    dataset = ProteinDataset(names)
+
+    # Pre-compute lengths for batching
+    lengths = []
+    valid_indices = []
+    for i, name in enumerate(names):
+        path = os.path.join(PROCESSED_DIR, f"{name}.pt")
+        if os.path.exists(path):
+            data = torch.load(path, weights_only=False)
+            lengths.append(data['length'])
+            valid_indices.append(i)
+
+    # Sort by length for efficient packing
+    sorted_order = sorted(range(len(valid_indices)), key=lambda i: lengths[i])
+    sorted_indices = [valid_indices[sorted_order[i]] for i in range(len(sorted_order))]
+    sorted_lengths = [lengths[sorted_order[i]] for i in range(len(sorted_order))]
+
+    # Build batches by token count
+    batches = []
+    current_batch = []
+    current_tokens = 0
+    for idx, length in zip(sorted_indices, sorted_lengths):
+        if current_tokens + length > batch_size_tokens and current_batch:
+            batches.append(current_batch)
+            current_batch = [idx]
+            current_tokens = length
+        else:
+            current_batch.append(idx)
+            current_tokens += length
+    if current_batch:
+        batches.append(current_batch)
+
+    is_train = (split == 'train')
+
+    def generate():
+        while True:
+            order = list(range(len(batches)))
+            if is_train:
+                import random
+                random.shuffle(order)
+            for batch_idx in order:
+                items = [dataset[i] for i in batches[batch_idx]]
+                yield collate_proteins(items)
+            if not is_train:
+                return  # single pass for val/test
+
+    return generate()
