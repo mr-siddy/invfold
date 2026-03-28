@@ -19,18 +19,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from prepare import (
-    TIME_BUDGET as _TIME_BUDGET, SEED, NUM_AMINO_ACIDS, MAX_NEIGHBORS, NUM_RBF,
+    TIME_BUDGET, SEED, NUM_AMINO_ACIDS, MAX_NEIGHBORS, NUM_RBF,
     compute_edge_features, compute_node_features,
     make_dataloader, evaluate_recovery,
 )
 
-# Override time budget for demo (set to 300 for full runs)
-TIME_BUDGET = 60
-
 # Hyperparameters (edit freely)
 HIDDEN_DIM = 128
 NUM_ENCODER_LAYERS = 3
-BACKBONE_NOISE = 0.10  # Angstroms (higher noise)
+BACKBONE_NOISE = 0.02  # Angstroms
 DROPOUT = 0.1
 LR = 1e-3
 WARMUP_EPOCHS = 3
