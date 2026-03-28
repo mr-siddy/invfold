@@ -516,3 +516,61 @@ def make_dataloader(split, batch_size_tokens=10000):
                 return  # single pass for val/test
 
     return generate()
+
+
+# ---------------------------------------------------------------------------
+# Evaluation (DO NOT CHANGE — this is the fixed metric)
+# ---------------------------------------------------------------------------
+
+@torch.no_grad()
+def evaluate_recovery(model, test_loader, device):
+    """Compute average sequence recovery on a test/val set.
+
+    THE METRIC: fraction of correctly predicted amino acids.
+    Deterministic evaluation — fixed seed, no randomness.
+
+    The model must implement ``predict_logits(batch) -> (total_residues, 20)``.
+
+    Returns:
+        (recovery, perplexity) tuple.
+    """
+    model.eval()
+    torch.manual_seed(SEED)
+
+    total_correct = 0
+    total_residues = 0
+    total_ce_loss = 0.0
+
+    for batch in test_loader:
+        batch = {k: v.to(device) if torch.is_tensor(v) else v
+                 for k, v in batch.items()}
+
+        logits = model.predict_logits(batch)   # (total_residues, 20)
+        targets = batch['seq']
+        mask = batch['mask']
+
+        preds = logits.argmax(dim=-1)
+        correct = ((preds == targets) & mask).sum().item()
+        total_correct += correct
+        total_residues += mask.sum().item()
+
+        ce = F.cross_entropy(logits[mask], targets[mask], reduction='sum')
+        total_ce_loss += ce.item()
+
+    recovery = total_correct / max(total_residues, 1)
+    perplexity = math.exp(total_ce_loss / max(total_residues, 1))
+    return recovery, perplexity
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    print(f"Cache directory: {CACHE_DIR}")
+    print()
+    download_data()
+    print()
+    cache_dataset()
+    print()
+    print("Done! Ready to train.")
