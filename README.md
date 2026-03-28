@@ -1,6 +1,10 @@
-# invfold
+<p align="center">
+  <img src="autobio_banner_3840x1600.png" alt="AutoBio — Inverse Protein Folding" width="100%">
+</p>
 
-**Autonomous protein inverse folding research, powered by AI agents.**
+<h1 align="center">invfold</h1>
+
+<p align="center"><b>Autonomous protein inverse folding research, powered by AI agents.</b></p>
 
 ![progress](progress.png)
 
@@ -248,6 +252,29 @@ Each protein is cached as a `.pt` file containing:
     'length':      int        # number of residues
 }
 ```
+
+### Dataset statistics
+
+![dataset overview](dataset_overview.png)
+
+- **Length distribution:** Median 217 residues, mean 223, range 10-500. Total 4.8M residues across 21,571 proteins.
+- **Amino acid frequencies:** Leucine (8.9%) and Alanine (7.8%) most common. Tryptophan (1.2%) and Cysteine (1.7%) rarest. Colored by chemical property: hydrophobic, polar, positive, negative, special.
+- **Split balance:** Train/val/test distributions overlap well — no length bias between splits.
+- **Backbone completeness:** 22.8% of proteins have all backbone atoms resolved. 95.1% mean completeness across the dataset.
+
+### Example protein structures
+
+![dataset proteins](dataset_proteins.png)
+
+Six proteins from the test set, PCA-projected from 3D to 2D. Each dot is a CA (alpha carbon) atom. Color runs from N-terminus (blue) to C-terminus (red), showing chain direction. Sizes range from 85 to 304 residues. The top 3 most frequent amino acids are labeled per protein.
+
+### Featurization details
+
+![dataset features](dataset_features.png)
+
+- **k-NN graph:** Each residue connects to its 48 nearest CA neighbors. The graph captures local and medium-range contacts.
+- **CA-CA distances:** Neighbor distances peak at 3.8 A (sequential) with a long tail out to ~20 A. Median ~11 A.
+- **Gaussian RBF encoding:** 16 evenly-spaced basis functions from 0-20 A encode each distance into a 16-dim vector. 15 atom pairs x 16 bins = 240-dim edge features.
 
 ---
 
