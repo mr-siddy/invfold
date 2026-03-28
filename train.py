@@ -30,7 +30,7 @@ TIME_BUDGET = 60
 # Hyperparameters (edit freely)
 HIDDEN_DIM = 128
 NUM_ENCODER_LAYERS = 3
-BACKBONE_NOISE = 0.02  # Angstroms
+BACKBONE_NOISE = 0.10  # Angstroms (higher noise)
 DROPOUT = 0.1
 LR = 1e-3
 WARMUP_EPOCHS = 3
