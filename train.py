@@ -27,7 +27,7 @@ from prepare import (
 # Hyperparameters (edit freely)
 HIDDEN_DIM = 128
 NUM_ENCODER_LAYERS = 3
-BACKBONE_NOISE = 0.02  # Angstroms
+BACKBONE_NOISE = 0.0  # Disabled for speed — features precomputed in dataloader
 DROPOUT = 0.1
 LR = 1e-3
 WARMUP_EPOCHS = 3
@@ -120,6 +120,10 @@ class InverseFoldingModel(nn.Module):
 
     def _featurize(self, batch, noise=0.0):
         """Compute features from (possibly noised) coordinates."""
+        # Use precomputed features if available and no noise
+        if noise == 0 and 'edge_features' in batch and 'node_features' in batch:
+            return batch['node_features'], batch['edge_features']
+
         coords = batch['coords']  # (N, 5, 3)
         knn_indices = batch['knn_indices']  # (N, k)
         batch_idx = batch['batch_idx']
@@ -210,6 +214,13 @@ while True:
 
     for batch in train_loader:
         t0 = time.time()
+
+        # Precompute features on CPU before moving to device
+        if 'edge_features' not in batch:
+            batch['edge_features'] = compute_edge_features(
+                batch['coords'], batch['knn_indices'])
+            batch['node_features'] = compute_node_features(
+                batch['coords'][:, :4], batch['batch_idx'], batch['lengths'])
 
         batch = {k: v.to(device) if torch.is_tensor(v) else v
                  for k, v in batch.items()}
