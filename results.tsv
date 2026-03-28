@@ -1,0 +1,12 @@
+commit	val_metric	memory_gb	status	description
+bd2b3a4	0.232475	38.8	keep	baseline
+210a536	0.269916	39.0	keep	precompute features + disable noise
+6875788	0.262334	25.2	discard	smaller batches (5K) + higher LR (2e-3)
+c66dabe	0.187315	38.9	discard	increase encoder layers 3->5
+f1410d2	0.257883	29.7	discard	wider model (192-dim) + fewer layers (2)
+45a12c0	0.273833	33.2	keep	remove dropout (underfitting regime)
+b841d73	0.232596	37.9	discard	LR 2e-3 + no warmup
+6b44a78	0.268557	37.4	discard	add input skip connection
+3084aaa	0.244827	38.9	discard	replace ReLU with GELU
+e86f59b	0.247776	32.0	discard	remove edge updates for speed
+ffbb6e4	0.252458	29.2	discard	mean aggregation instead of sum

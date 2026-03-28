@@ -26,7 +26,7 @@ print()
 # ─────────────────────────────────────────────────────────────
 
 fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-fig.suptitle(f"Protein Inverse Folding — Autoresearch Demo\n"
+fig.suptitle(f"Protein Inverse Folding — Autoresearch (300s budget)\n"
              f"{n_total} Experiments | {n_keep} Kept | {n_discard} Discarded",
              fontsize=14, fontweight="bold")
 
