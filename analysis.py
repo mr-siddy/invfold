@@ -40,95 +40,115 @@ disc = valid[valid["status"] == "DISCARD"]
 kept = valid[valid["status"] == "KEEP"]
 
 # =====================================================================
-# Figure 1: Main progress chart (single clean plot)
+# Figure 1: Main progress chart — full detail, every label, exact values
 # =====================================================================
 
-fig, ax = plt.subplots(figsize=(14, 7))
+fig, ax = plt.subplots(figsize=(22, 14))
 
-# Discarded experiments (red x markers)
+# Discarded experiments (gray circles)
 ax.scatter(disc.index, disc["val_metric"] * 100,
-           c="#e74c3c", s=80, alpha=0.5, zorder=2, label="Discarded",
-           marker="x", linewidths=2)
+           c="#cccccc", s=100, alpha=0.7, zorder=2, label="Discarded",
+           edgecolors="#999999", linewidths=0.8)
 
-# Kept experiments (green circles)
+# Kept experiments (green circles, larger)
 ax.scatter(kept.index, kept["val_metric"] * 100,
-           c="#2ecc71", s=120, zorder=4, label="Kept",
-           edgecolors="black", linewidths=1)
+           c="#2ecc71", s=180, zorder=4, label="Kept",
+           edgecolors="black", linewidths=1.2)
 
 # Running best step line
 kept_vals = valid.loc[valid["status"] == "KEEP", "val_metric"] * 100
 running_best = kept_vals.cummax()
-# Extend the line to the end
 extended_idx = list(kept.index) + [len(valid) - 1]
 extended_vals = list(running_best) + [running_best.iloc[-1]]
 ax.step(extended_idx, extended_vals, where="post", color="#27ae60",
-        linewidth=2.5, alpha=0.8, zorder=3, label="Running best")
+        linewidth=3, alpha=0.8, zorder=3, label="Running best")
 
 # Baseline reference line
 ax.axhline(y=baseline_val * 100, color="#3498db", linestyle="--",
-           alpha=0.4, linewidth=1, label=f"Baseline ({baseline_val*100:.1f}%)")
+           alpha=0.5, linewidth=1.5, label=f"Baseline ({baseline_val*100:.2f}%)")
 
-# Shorten descriptions for annotations
-def shorten(desc):
-    d = str(desc).strip()
-    replacements = {
-        "precompute features + disable noise": "precompute features",
-        "smaller batches (5K) + higher LR (2e-3)": "small batch + high LR",
-        "increase encoder layers 3->5": "5 encoder layers",
-        "wider model (192-dim) + fewer layers (2)": "192-dim / 2 layers",
-        "remove dropout (underfitting regime)": "remove dropout",
-        "LR 2e-3 + no warmup": "LR 2e-3, no warmup",
-        "add input skip connection": "input skip conn.",
-        "replace ReLU with GELU": "GELU activation",
-        "remove edge updates for speed": "no edge updates",
-        "mean aggregation instead of sum": "mean aggregation",
-    }
-    return replacements.get(d, d[:25])
+# ── Annotate EVERY experiment with full description + exact value + delta ──
 
-# Annotate kept experiments (bold, green box)
-kept_offsets = [(15, 18), (15, -25), (15, 18)]
-for i, idx in enumerate(kept.index):
-    desc = shorten(valid.loc[idx, "description"])
-    val = valid.loc[idx, "val_metric"] * 100
-    ox, oy = kept_offsets[i] if i < len(kept_offsets) else (15, 18)
-    ax.annotate(f"{desc}\n({val:.1f}%)", (idx, val),
-                textcoords="offset points", xytext=(ox, oy),
-                fontsize=9, color="#1a7a3a", fontweight="bold",
-                ha="left", va="bottom",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
-                          edgecolor="#2ecc71", alpha=0.9),
-                arrowprops=dict(arrowstyle="->", color="#2ecc71",
-                                connectionstyle="arc3,rad=0.2"))
+# Pre-compute label positions to avoid overlap
+# Strategy: place labels on alternating sides (left/right) with vertical offsets
+# that spread out based on value clustering
 
-# Annotate discarded experiments (smaller, gray, alternating above/below)
-disc_list = list(disc.index)
-for j, idx in enumerate(disc_list):
-    desc = shorten(valid.loc[idx, "description"])
-    val = valid.loc[idx, "val_metric"] * 100
-    # Alternate above and below to reduce overlap
-    if j % 2 == 0:
-        oy = -18
-        va = "top"
+all_indices = list(valid.index)
+all_vals = [valid.loc[i, "val_metric"] * 100 for i in all_indices]
+all_descs = [str(valid.loc[i, "description"]).strip() for i in all_indices]
+all_status = [valid.loc[i, "status"] for i in all_indices]
+all_deltas = [(valid.loc[i, "val_metric"] - baseline_val) * 100 for i in all_indices]
+
+for i, (idx, val, desc, status, delta) in enumerate(
+        zip(all_indices, all_vals, all_descs, all_status, all_deltas)):
+
+    is_kept = status == "KEEP"
+
+    # Full label text: description + exact recovery + delta
+    if delta == 0:
+        label = f"{desc}\n{val:.2f}% (baseline)"
     else:
-        oy = 14
-        va = "bottom"
-    ax.annotate(desc, (idx, val),
-                textcoords="offset points", xytext=(0, oy),
-                fontsize=7.5, color="#7f8c8d", fontstyle="italic",
-                ha="center", va=va, alpha=0.85)
+        label = f"{desc}\n{val:.2f}% ({delta:+.2f} pp)"
 
-ax.set_xlabel("Experiment #")
-ax.set_ylabel("Sequence Recovery (%)")
-ax.set_title(f"Protein Inverse Folding — Autoresearch (300s budget)\n"
+    if is_kept:
+        # Kept: green box, arrow, placed to the right-above
+        # Stagger vertically for kept points
+        if idx == 0:
+            ox, oy = 20, 30
+        elif idx == 1:
+            ox, oy = 20, -45
+        else:
+            ox, oy = 20, 35
+
+        ax.annotate(label, (idx, val),
+                    textcoords="offset points", xytext=(ox, oy),
+                    fontsize=10, color="#1a7a3a", fontweight="bold",
+                    ha="left", va="center",
+                    bbox=dict(boxstyle="round,pad=0.4", facecolor="#eafaf1",
+                              edgecolor="#27ae60", linewidth=1.5, alpha=0.95),
+                    arrowprops=dict(arrowstyle="-|>", color="#27ae60",
+                                   lw=1.5, connectionstyle="arc3,rad=0.15"))
+    else:
+        # Discarded: gray text with thin arrow, alternate placement
+        # Use a deterministic spread pattern based on index
+        side_patterns = [
+            (25, -35),   # exp 2: right-below
+            (-25, -30),  # exp 3: left-below
+            (25, 25),    # exp 4: right-above
+            (-25, -35),  # exp 6: left-below
+            (25, 30),    # exp 7: right-above
+            (-25, 25),   # exp 8: left-above
+            (25, -30),   # exp 9: right-below
+            (-25, 30),   # exp 10: left-above
+        ]
+        disc_count = list(disc.index).index(idx)
+        ox, oy = side_patterns[disc_count % len(side_patterns)]
+        ha = "left" if ox > 0 else "right"
+
+        ax.annotate(label, (idx, val),
+                    textcoords="offset points", xytext=(ox, oy),
+                    fontsize=9, color="#666666",
+                    ha=ha, va="center",
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
+                              edgecolor="#cccccc", linewidth=0.8, alpha=0.9),
+                    arrowprops=dict(arrowstyle="-", color="#cccccc",
+                                   lw=0.8, connectionstyle="arc3,rad=0.1"))
+
+ax.set_xlabel("Experiment #", fontsize=13)
+ax.set_ylabel("Sequence Recovery (%)", fontsize=13)
+ax.set_title(f"Protein Inverse Folding — Autoresearch Progress (300s budget, Apple Silicon MPS)\n"
              f"{n_total} Experiments | {n_keep} Kept | {n_discard} Discarded | "
-             f"Best: {best_val*100:.1f}% (+{improvement:.1f}% vs baseline)",
-             fontweight="bold")
-ax.legend(loc="lower right", fontsize=10, framealpha=0.9)
-ax.grid(True, alpha=0.15)
-ax.set_xlim(-0.8, n_total - 0.2)
-y_min = valid["val_metric"].min() * 100 - 4
-y_max = valid["val_metric"].max() * 100 + 5
+             f"Baseline: {baseline_val*100:.2f}% | Best: {best_val*100:.2f}% "
+             f"(+{(best_val-baseline_val)*100:.2f} pp, +{improvement:.1f}% relative)",
+             fontsize=14, fontweight="bold")
+ax.legend(loc="lower right", fontsize=12, framealpha=0.95,
+          edgecolor="#cccccc", fancybox=True)
+ax.grid(True, alpha=0.2)
+ax.set_xlim(-1.5, n_total + 1)
+y_min = valid["val_metric"].min() * 100 - 6
+y_max = valid["val_metric"].max() * 100 + 6
 ax.set_ylim(y_min, y_max)
+ax.tick_params(axis='both', labelsize=11)
 
 plt.tight_layout()
 plt.savefig("progress.png", dpi=150, bbox_inches="tight")
