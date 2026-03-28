@@ -28,7 +28,7 @@ from prepare import (
 HIDDEN_DIM = 128
 NUM_ENCODER_LAYERS = 3
 BACKBONE_NOISE = 0.0  # Disabled for speed — features precomputed in dataloader
-DROPOUT = 0.1
+DROPOUT = 0.0
 LR = 1e-3
 WARMUP_EPOCHS = 3
 BATCH_SIZE_TOKENS = 10000
