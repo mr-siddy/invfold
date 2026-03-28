@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+run.log
+results.tsv
+.venv/
+*.egg-info/
